@@ -90,15 +90,34 @@ app.post('/api/ai/chat', async (req, res) => {
       const promptContent = formattedContext ? `${formattedContext}${lastUserMsg}` : lastUserMsg;
 
       try {
-        const geminiModel = model || 'gemini-3.8-flash';
-        const response = await ai.models.generateContent({
-          model: geminiModel,
-          contents: promptContent,
-          config: {
-            systemInstruction,
-            temperature: 0.7,
-          },
-        });
+        const candidateModels = [model || 'gemini-3.6-flash', 'gemini-3.6-flash', 'gemini-3.8-flash'].filter(
+          (m, idx, arr) => m && arr.indexOf(m) === idx
+        );
+        let response: any = null;
+        let lastError: any = null;
+
+        for (const candidate of candidateModels) {
+          try {
+            response = await ai.models.generateContent({
+              model: candidate,
+              contents: promptContent,
+              config: {
+                systemInstruction,
+                temperature: 0.7,
+              },
+            });
+            if (response && response.text) {
+              break;
+            }
+          } catch (modelErr: any) {
+            lastError = modelErr;
+            console.warn(`Gemini model ${candidate} failed, trying next candidate if available...`, modelErr?.message || modelErr);
+          }
+        }
+
+        if (!response) {
+          throw lastError || new Error('No candidate Gemini model could fulfill the request.');
+        }
 
         const replyText = response.text || 'No text generated.';
         return res.json({ success: true, text: replyText });
@@ -249,6 +268,15 @@ app.post('/api/ai/chat', async (req, res) => {
 
       const reply = data.choices?.[0]?.message?.content || '';
       return res.json({ success: true, text: reply });
+    }
+
+    // 4. AXON LOCAL ENGINE PASS-THROUGH
+    if (provider === 'axon') {
+      const lastUserMsg = messages[messages.length - 1]?.text || 'Hello';
+      return res.json({
+        success: true,
+        text: `[AXON Local Core — On-Device Mode]\n\nProcessed query: "${lastUserMsg}". Running in offline-safe local mode for project "${projectContext?.name || 'General'}". Switch to Gemini in Settings or Model Engine for cloud AI.`,
+      });
     }
 
     return res.status(400).json({ success: false, message: 'Unsupported AI provider.' });

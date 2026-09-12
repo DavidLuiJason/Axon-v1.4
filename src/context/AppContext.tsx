@@ -79,7 +79,7 @@ import {
   synthesizeExecutiveSummary,
   triggerFileDownload,
 } from '../lib/projectMemory';
-import { axonBrain } from '../lib/axonBrain';
+import { axonBrain, BrainProcessResult } from '../lib/axonBrain';
 import { buildCapabilityRegistry, CapabilityRegistry } from '../lib/capabilityRegistry';
 import {
   DEFAULT_PROJECT_ACTIVITIES,
@@ -756,11 +756,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (saved) {
         const parsed: AppStateData = JSON.parse(saved);
         if (parsed.settings?.activeModelId) {
+          if (parsed.settings.activeModelId === 'gemini-2.5-flash') {
+            return 'gemini-3.6-flash';
+          }
           return parsed.settings.activeModelId;
         }
       }
     } catch (e) {}
-    return 'gemini-3.8-flash';
+    return 'gemini-3.6-flash';
   });
 
   const [conversationSummary, setConversationSummary] = useState<string>('');
@@ -1737,6 +1740,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           id: `msg-${Date.now()}-switch-same`,
           sender: 'axon',
           text: msg,
+          projectId: activeProjectId,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         },
       ]);
@@ -1787,6 +1791,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         id: `msg-${Date.now()}-switch-ok`,
         sender: 'axon',
         text: switchText,
+        projectId: activeProjectId,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         accountUsed: target.label,
       },
@@ -1829,39 +1834,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const nextMessages = [...messages, userMsg];
     setMessages(nextMessages);
 
-    // AXON Brain Core — Central intelligence processing pipeline (Phase 0 Scaffold)
-    const brainResult = await axonBrain.processRequest({
-      id: userMsg.id,
-      text,
-      projectId: activeProjectId,
-      attachment,
-      context: {
-        conversationHistory: nextMessages,
-        projectNotes: activeProjectNotes,
-        systemContext: activeProject.systemContext,
-        timelineEvents: projectActivities,
-        capabilityRegistry,
-      },
-    });
-
-    // Record activity in project timeline
-    if (brainResult.activityEvent) {
-      setProjectActivities((prev) => [brainResult.activityEvent!, ...prev]);
-    }
-
-    // Direct response handled by AXON internal intelligence (e.g. project timeline query, file intelligence search)
-    if (brainResult.handledLocally && brainResult.localResponse) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `msg-${Date.now()}-brain`,
-          sender: 'axon',
-          text: brainResult.localResponse!,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          modelUsed: brainResult.modelLabel,
+    // AXON Brain Core — Central intelligence processing pipeline
+    let brainResult: BrainProcessResult | null = null;
+    try {
+      brainResult = await axonBrain.processRequest({
+        id: userMsg.id,
+        text,
+        projectId: activeProjectId,
+        attachment,
+        context: {
+          conversationHistory: nextMessages,
+          projectNotes: activeProjectNotes,
+          systemContext: activeProject?.systemContext || '',
+          timelineEvents: projectActivities,
+          capabilityRegistry,
         },
-      ]);
-      return;
+      });
+
+      // Record activity in project timeline
+      if (brainResult?.activityEvent) {
+        setProjectActivities((prev) => [brainResult!.activityEvent!, ...prev]);
+      }
+
+      // Direct response handled by AXON internal intelligence (e.g. meta-plan query, project timeline query, file intelligence search)
+      if (brainResult?.handledLocally && brainResult.localResponse) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `msg-${Date.now()}-brain`,
+            sender: 'axon',
+            text: brainResult!.localResponse!,
+            projectId: activeProjectId,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            modelUsed: brainResult!.modelLabel,
+          },
+        ]);
+        return;
+      }
+    } catch (brainErr) {
+      console.warn('AXON Brain processing error (gracefully proceeding to standard chat dispatch):', brainErr);
     }
 
     // 0. Check for custom command Run Code entries (e.g. /status)
@@ -1899,6 +1910,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             id: `msg-${Date.now()}-cmd`,
             sender: 'axon',
             text: execResult.success ? execResult.output : `Run Code error: ${execResult.error}`,
+            projectId: activeProjectId,
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             modelUsed: `AXON Run Code (${activeCommand.title})`,
           },
@@ -1918,6 +1930,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           id: `msg-${Date.now()}-calc`,
           sender: 'axon',
           text: mathResult,
+          projectId: activeProjectId,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           modelUsed: 'AXON Offline Calculator Engine',
         },
@@ -1939,6 +1952,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           id: `msg-${Date.now()}-storage`,
           sender: 'axon',
           text: storageCmdResult,
+          projectId: activeProjectId,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           modelUsed: 'AXON Storage Engine',
         },
@@ -1962,6 +1976,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           id: `msg-${Date.now()}-self`,
           sender: 'axon',
           text: selfCheck.response,
+          projectId: activeProjectId,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           modelUsed: 'AXON Self-Knowledge',
         },
@@ -2032,12 +2047,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           id: `msg-${Date.now()}-cooldown`,
           sender: 'axon',
           text: `Account "${currentAccount.label}" (${activeModel.providerName}) reached its usage limit and is in cooldown (${remaining}).\n\nPer safety protocol, AXON does not automatically switch accounts. You can manually switch accounts by typing e.g. "switch to account B" or selecting another account in Settings.`,
+          projectId: activeProjectId,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           modelUsed: activeModel.name,
           accountUsed: currentAccount.label,
           isRateLimitedNotice: true,
         },
       ]);
+      return;
+    }
+
+    // 5. AXON Local Core offline execution (no external network request required)
+    if (activeModel.provider === 'axon') {
+      setIsGeneratingResponse(true);
+      setLiveThinkingStatus('Processing on-device...');
+      try {
+        const localReply = brainResult?.plan
+          ? `[AXON Local Core — On-Device Engine]\n\nI have analyzed your request using AXON internal reasoning:\n\n• **Goal**: ${brainResult.plan.goal}\n• **Strategy**: ${brainResult.plan.rationale}\n\n**Action Plan:**\n${brainResult.plan.steps.map((s) => `${s.stepIndex}. **${s.title}**: ${s.summary}`).join('\n')}\n\n*Running in on-device mode for workspace "${activeProject.name}". To connect to multimodal cloud models, select Gemini in the Model Engine or AI Accounts.*`
+          : `[AXON Local Core]\n\nOperating in on-device mode for workspace "${activeProject.name}". Local offline intelligence is active. To enable cloud AI models, select Gemini in the Model Engine or AI Accounts.`;
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `msg-${Date.now()}-axon-local`,
+            sender: 'axon',
+            text: localReply,
+            projectId: activeProjectId,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            modelUsed: 'AXON Local Core',
+          },
+        ]);
+      } finally {
+        setIsGeneratingResponse(false);
+        setLiveThinkingStatus(null);
+      }
       return;
     }
 
@@ -2180,6 +2223,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               id: `msg-${Date.now()}-limited`,
               sender: 'axon',
               text: `Account "${currentAccount?.label || 'Active'}" has reached its usage limit. A 24-hour cooldown timer has been recorded in memory.\n\nAXON has stopped using this account and will NOT switch accounts automatically. You can manually switch to another account whenever ready by typing e.g. "switch to account B" or managing accounts in Settings.`,
+              projectId: activeProjectId,
               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
               modelUsed: activeModel.name,
               accountUsed: currentAccount?.label,
@@ -2197,6 +2241,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               id: `msg-${Date.now()}-nokey`,
               sender: 'axon',
               text: `${data.message}\n\nYou can enter and manage your official API key in AXON Settings > AI Accounts, or select Gemini to use workspace credentials.`,
+              projectId: activeProjectId,
               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
               modelUsed: activeModel.name,
               accountUsed: currentAccount?.label,
@@ -2213,6 +2258,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             id: `msg-${Date.now()}-err`,
             sender: 'axon',
             text: `Notice from ${activeModel.name}: ${data?.message || 'Unable to process request.'}`,
+            projectId: activeProjectId,
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             modelUsed: activeModel.name,
           },
@@ -2256,6 +2302,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           id: `msg-${Date.now()}-reply`,
           sender: 'axon',
           text: finalResponseText,
+          projectId: activeProjectId,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           modelUsed: activeModel.name,
           accountUsed: currentAccount?.label,
@@ -2269,6 +2316,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           id: `msg-${Date.now()}-fallback`,
           sender: 'axon',
           text: `I am currently running in offline mode. To interact with ${activeModel.name}, ensure your network is connected and your official API key is configured in Settings.`,
+          projectId: activeProjectId,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           modelUsed: 'AXON Offline Fallback',
         },

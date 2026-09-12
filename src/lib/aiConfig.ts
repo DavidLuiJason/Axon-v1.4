@@ -2,6 +2,22 @@ import { AIAccount, AIModelOption } from '../types';
 
 export const AVAILABLE_AI_MODELS: AIModelOption[] = [
   {
+    id: 'gemini-3.6-flash',
+    name: 'Gemini 3.6 Flash',
+    provider: 'gemini',
+    providerName: 'Google',
+    badge: 'Recommended',
+    description: 'High-speed multimodal reasoning and responsive chat assistance.',
+  },
+  {
+    id: 'gemini-3.8-flash',
+    name: 'Gemini 3.8 Flash',
+    provider: 'gemini',
+    providerName: 'Google',
+    badge: 'Next Gen',
+    description: 'Ultra-fast multimodal reasoning and responsive assistance.',
+  },
+  {
     id: 'axon-offline-core',
     name: 'AXON Local Core',
     provider: 'axon',
@@ -14,7 +30,7 @@ export const AVAILABLE_AI_MODELS: AIModelOption[] = [
     name: 'Gemini 2.5 Flash',
     provider: 'gemini',
     providerName: 'Google',
-    badge: 'Fast & Smart',
+    badge: 'Workhorse',
     description: 'High performance multimodal model optimized for real-time chat and workspace tasks.',
   },
   {
@@ -24,6 +40,22 @@ export const AVAILABLE_AI_MODELS: AIModelOption[] = [
     providerName: 'Google',
     badge: 'Reasoning',
     description: 'Complex reasoning, advanced coding synthesis, and architectural design.',
+  },
+  {
+    id: 'claude-3-5-sonnet',
+    name: 'Claude 3.5 Sonnet',
+    provider: 'claude',
+    providerName: 'Anthropic',
+    badge: 'Coding Specialist',
+    description: 'Advanced systems architecture, nuanced reasoning, and deep code generation.',
+  },
+  {
+    id: 'gpt-4o',
+    name: 'ChatGPT 4o',
+    provider: 'chatgpt',
+    providerName: 'OpenAI',
+    badge: 'Omni Multimodal',
+    description: 'Versatile multimodal intelligence with advanced vision and structured responses.',
   },
 ];
 
