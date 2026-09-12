@@ -58,34 +58,13 @@ export function buildCapabilityRegistry(accounts: AIAccount[]): CapabilityRegist
   const capabilities: ExternalToolCapability[] = [];
 
   for (const account of accounts) {
+    // AXON local core is internal intelligence, not an external delegated tool
+    if (account.provider === 'axon') continue;
+
     const inCooldown = isAccountInCooldown(account);
     const cooldownStr = getRemainingCooldownString(account);
 
     switch (account.provider) {
-      case 'axon': {
-        // AXON Local Engine: On-device offline capabilities
-        capabilities.push({
-          id: `cap-${account.id}`,
-          name: 'AXON Offline Core',
-          provider: 'axon',
-          accountId: account.id,
-          accountLabel: account.label,
-          isAvailable: account.isActive,
-          reasonUnavailable: !account.isActive ? 'Account disabled by user' : undefined,
-          supportedFeatures: [
-            'offline_execution',
-            'math_tools',
-            'storage_manifest',
-            'file_search',
-          ],
-          rateLimitStatus: {
-            isRateLimited: false,
-          },
-          priorityTier: 1,
-        });
-        break;
-      }
-
       case 'gemini': {
         // Gemini: Fast multimodal, code generation, reasoning
         const hasKeyOrServer = Boolean(account.apiKey && account.apiKey.trim().length > 0) || true; // Server-side fallback supported

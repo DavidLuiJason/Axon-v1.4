@@ -37,25 +37,20 @@ export const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({ isOpen, 
 
   if (!isOpen) return null;
 
-  const currentModel = availableModels.find((m) => m.id === activeModelId) || availableModels[0];
+  // Filter to only external AI tool accounts available for delegation
+  const externalModels = availableModels.filter((m) => m.provider !== 'axon' && m.id !== 'axon-offline-core');
+  const currentModel = externalModels.find((m) => m.id === activeModelId) || externalModels[0] || availableModels[0];
 
   const filteredModels =
     selectedProviderTab === 'all'
-      ? availableModels
-      : availableModels.filter((m) => m.provider === selectedProviderTab);
+      ? externalModels
+      : externalModels.filter((m) => m.provider === selectedProviderTab);
 
-  // Ensure AXON Local Core is guaranteed the first (topmost) model in the list
-  const sortedFilteredModels = [...filteredModels].sort((a, b) => {
-    if (a.id === 'axon-offline-core') return -1;
-    if (b.id === 'axon-offline-core') return 1;
-    return 0;
-  });
-
-  const providerAccounts = aiAccounts.filter((a) => a.provider === currentModel.provider);
+  const providerAccounts = aiAccounts.filter((a) => a.provider === currentModel?.provider);
 
   const handleSelectModel = (modelId: string) => {
     setActiveModelId(modelId);
-    showToast('Model switched');
+    showToast('Delegation model switched');
   };
 
   const handleManualSwitch = async (accountLabel: string) => {
@@ -71,7 +66,7 @@ export const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({ isOpen, 
       onClose={onClose}
       id="model-selector-modal"
       maxWidth="md"
-      ariaLabel="AI Model and Account Selector"
+      ariaLabel="External AI Delegation Model and Account Selector"
       className="p-4 sm:p-5 space-y-4"
     >
       {/* Header */}
@@ -79,8 +74,8 @@ export const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({ isOpen, 
         <div className="flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-white" />
           <div>
-            <h3 className="text-sm font-bold text-white">AI Model & Account Engine</h3>
-            <p className="text-[11px] text-neutral-400">Official API connections & session routing</p>
+            <h3 className="text-sm font-bold text-white">External AI Delegation Engine</h3>
+            <p className="text-[11px] text-neutral-400">External AI tool accounts available for task delegation</p>
           </div>
         </div>
         <button
@@ -99,7 +94,6 @@ export const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({ isOpen, 
           {(
             [
               { id: 'all', label: 'All' },
-              { id: 'axon', label: 'AXON' },
               { id: 'gemini', label: 'Gemini' },
               { id: 'claude', label: 'Claude' },
               { id: 'chatgpt', label: 'ChatGPT' },
@@ -124,11 +118,11 @@ export const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({ isOpen, 
           {/* Models List */}
           <div className="space-y-2">
             <p className="text-xs font-semibold text-neutral-300 uppercase tracking-wider">
-              Select Active Intelligence Model
+              Select External Delegation Model
             </p>
 
             <div className="space-y-1.5">
-              {sortedFilteredModels.map((model) => {
+              {filteredModels.map((model) => {
                 const isSelected = model.id === activeModelId;
                 const activeAccountForModel = aiAccounts.find(
                   (a) => a.provider === model.provider && a.isActive

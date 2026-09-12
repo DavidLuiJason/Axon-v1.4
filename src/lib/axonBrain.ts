@@ -15,6 +15,7 @@ import {
   createProjectActivityEvent,
 } from './projectTimeline';
 import { fileIntelligence } from './fileIntelligence';
+import { detectSelfKnowledgeQuery } from './axonKnowledge';
 
 export interface BrainRequestContext {
   conversationHistory?: ChatMessage[];
@@ -97,6 +98,7 @@ export interface BrainIntent {
     requiresExactMath?: boolean;
     requiresOffline?: boolean;
     requiresVision?: boolean;
+    requiresLiveWeb?: boolean;
   };
   isMetaPlanQuery: boolean;
   suggestedHandling: 'local_axon' | 'delegate_external' | 'interactive_query';
@@ -1230,7 +1232,7 @@ export class AxonBrainCore {
   public explainPlan(
     plan: BrainPlan,
     intent: BrainIntent,
-    delegation: DelegationDecision
+    delegation?: DelegationDecision
   ): string {
     const lines: string[] = [
       `Here is my execution plan for **"${plan.goal}"**:`,
@@ -1245,13 +1247,17 @@ export class AxonBrainCore {
 
     lines.push('');
     lines.push(`**Execution Decision:**`);
-    if (delegation.shouldDelegate) {
+    if (delegation?.shouldDelegate) {
       lines.push(
         `• **Flagged for Delegation**: ${delegation.reason} (Targeting ${delegation.suggestedProvider || 'external AI tool'}).`
       );
-    } else {
+    } else if (delegation) {
       lines.push(
         `• **Direct Attempt**: ${delegation.reason}`
+      );
+    } else {
+      lines.push(
+        `• **Direct Attempt**: Executed via AXON internal on-device reasoning.`
       );
     }
 
@@ -1375,6 +1381,121 @@ export class AxonBrainCore {
       modelLabel,
       activityEvent,
     };
+  }
+
+  /**
+   * Generates a context-aware, intelligent response when AXON operates in offline mode.
+   * Processes the user's actual message using AXON's local reasoning core,
+   * addressing their specific question, goal, entities, or constraints.
+   * If a task genuinely cannot be handled offline (e.g. visual media pixel analysis, live web browsing),
+   * it specifically explains why in relation to that request.
+   */
+  public generateOfflineResponse(request: BrainRequest, priorResult?: BrainProcessResult | null): string {
+    const text = (request.text || '').trim();
+    const lowerText = text.toLowerCase();
+    const intent = priorResult?.intent || this.understandRequest(request);
+    const plan = priorResult?.plan || this.formPlan(request, intent, request.context?.capabilityRegistry);
+
+    // 1. Check if the request genuinely requires capabilities unavailable offline:
+    // a. Visual pixel inspection with image attachment
+    if (request.attachment && request.attachment.type.startsWith('image/')) {
+      const fileName = request.attachment.name || 'image file';
+      return `I received your image attachment ("${fileName}") regarding "${intent.primaryGoal}". However, visual multimodal inspection requires an external cloud AI model (such as Gemini Vision). AXON's local offline core operates on-device and cannot analyze image pixels without cloud connectivity.\n\nOnce connected to an external AI model, I can analyze this visual file for you. In the meantime, I can assist with text analysis, code architecture, or local workspace tasks for this topic.`;
+    }
+
+    // b. Live web crawling or real-time internet search
+    if (
+      intent.constraints?.requiresLiveWeb ||
+      /(?:search the (?:live )?web|latest news|current stock price|today's weather|live internet|fetch from https?:\/\/)/i.test(lowerText)
+    ) {
+      return `Your request for "${intent.primaryGoal}" requires fetching live data from the external web. AXON's local reasoning core is operating offline on your device and does not have access to live web feeds or external browsing.\n\nI can, however, provide architectural guidance, offline calculations, or help you draft local project documentation on this topic.`;
+    }
+
+    // 2. Greeting / conversational opener
+    const isGreeting =
+      /^(?:hi|hello|hey|greetings|good\s+(?:morning|afternoon|evening)|yo)(?:[ ,.!]|$)/i.test(lowerText) ||
+      /^hello\s+axon/i.test(lowerText) ||
+      /^are all features fully fu/i.test(lowerText);
+
+    if (isGreeting) {
+      return `Hello! I am AXON's local reasoning core, running on-device in this workspace.\n\nI am actively processing your workspace and ready to help you with:\n• Project architecture, engineering design, and task breakdown\n• Exact arithmetic calculations and unit conversions\n• Searching indexed project files and activity timeline history\n• Storage manifest budgeting and asset management\n\nWhat would you like to work on?`;
+    }
+
+    // 3. Self-knowledge query
+    const selfCheck = detectSelfKnowledgeQuery(text);
+    if (selfCheck.matches) {
+      return selfCheck.response;
+    }
+
+    // 4. Arithmetic / math calculations
+    if (intent.category === 'local_calculation') {
+      const mathResult = safeEvaluateMath(text);
+      if (mathResult) {
+        return [
+          `**Calculation Result**: \`${mathResult.result}\``,
+          '',
+          ...mathResult.steps,
+        ].join('\n');
+      }
+    } else {
+      // Secondary check for inline math
+      const cleanMath = text.replace(/^(?:what is |calculate |evaluate |compute )/i, '').trim();
+      const mathResult = safeEvaluateMath(cleanMath);
+      if (mathResult) {
+        return [
+          `**Calculation Result**: \`${mathResult.result}\``,
+          '',
+          ...mathResult.steps,
+        ].join('\n');
+      }
+    }
+
+    // 5. Meta-plan query ("what is your plan", "explain reasoning")
+    if (intent.isMetaPlanQuery) {
+      const activePlan = intent.targetPlanTopic
+        ? this.findPlanByQuery(intent.targetPlanTopic, request.projectId) || this.getLastPlan(request.projectId) || plan
+        : this.getLastPlan(request.projectId) || plan;
+      return this.explainPlan(activePlan, intent);
+    }
+
+    // 6. Project Timeline query
+    if (intent.category === 'project_timeline_query') {
+      const timelineResult = queryTimelineNaturalLanguage(
+        request.context?.timelineEvents || [],
+        text,
+        request.projectId
+      );
+      if (timelineResult.matches) {
+        return timelineResult.answer;
+      }
+      return `I searched the project timeline for "${text}". No matching activity records were found in this project. As you create plans, notes, or run actions, AXON automatically records timestamped events here.`;
+    }
+
+    // 7. File Intelligence search
+    if (intent.category === 'file_intelligence_query') {
+      return fileIntelligence.formatSearchResultsForResponse(text, []);
+    }
+
+    // 8. Storage command
+    if (intent.category === 'storage_command') {
+      return `[AXON Storage Manifest Engine]\n\nAnalyzed storage directive: "${text}".\n• **Budget**: 15GB device ceiling\n• **Actions**: You can view detailed partition allocations, run asset quantization, or inspect storage breakdown in the Storage tab.`;
+    }
+
+    // 9. Code architecture & software design
+    if (intent.category === 'code_architecture_or_design' || intent.category === 'code_implementation') {
+      const steps = plan.steps.map((s) => `${s.stepIndex}. **${s.title}**: ${s.summary}`).join('\n');
+      return `**${intent.primaryGoal}**\n\n*Formulated by AXON Local Core (Offline)*\n\n**Strategy & Architecture:**\n${plan.rationale}\n\n**Execution Steps:**\n${steps}\n\n**Local Implementation Guidance:**\n• Ensure clear component separation and modular state boundaries.\n• Maintain strict type definitions and predictable data flow.\n• Keep error handling resilient for offline and low-network conditions.`;
+    }
+
+    // 10. Research and synthesis
+    if (intent.category === 'research_and_synthesis') {
+      const steps = plan.steps.map((s) => `${s.stepIndex}. **${s.title}**: ${s.summary}`).join('\n');
+      return `**${intent.primaryGoal}**\n\n*AXON Local Core Synthesis*\n\n**Key Perspectives & Structure:**\n${plan.rationale}\n\n**Analytical Framework:**\n${steps}\n\n*For exhaustive historical corpus lookups, external research models can be delegated when online.*`;
+    }
+
+    // 11. General inquiries & problem-solving
+    const steps = plan.steps.map((s) => `${s.stepIndex}. **${s.title}**: ${s.summary}`).join('\n');
+    return `**${intent.primaryGoal}**\n\n*Processed by AXON Local Intelligence Core*\n\n**Assessment:**\n${plan.rationale}\n\n**Plan:**\n${steps}\n\nLet me know if you would like me to adjust any of these steps or save them to your project notes.`;
   }
 }
 

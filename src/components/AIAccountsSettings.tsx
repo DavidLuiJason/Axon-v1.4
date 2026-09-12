@@ -66,11 +66,6 @@ export const AIAccountsSettings: React.FC = () => {
   // Account activation / switching
   const handleSelectAccount = async (account: AIAccount) => {
     const res = await switchAccount(account.label, account.provider);
-    if (account.provider === 'gemini') {
-      if (activeModelId === 'axon-offline-core') {
-        setActiveModelId('gemini-2.5-flash');
-      }
-    }
     if (res.success) {
       showToast(`Switched to ${account.label}`);
     }
@@ -143,19 +138,21 @@ export const AIAccountsSettings: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* SECTION 1: Active Intelligence Models */}
+      {/* SECTION 1: External Delegation Models */}
       <div className="space-y-2.5">
         <div className="px-1">
           <h3 className="text-xs font-semibold text-white uppercase tracking-wider">
-            Intelligence Models
+            External Delegation Models
           </h3>
           <p className="text-[11px] text-neutral-400">
-            Tap any model to activate it as the primary intelligence engine
+            External AI tool accounts available for specialized sub-task delegation
           </p>
         </div>
 
         <div className="rounded-2xl bg-neutral-900/40 border border-neutral-800/80 overflow-hidden">
-          {availableModels.map((model) => {
+          {availableModels
+            .filter((m) => m.provider !== 'axon' && m.id !== 'axon-offline-core')
+            .map((model) => {
             const isModelActive = activeModelId === model.id;
 
             // Find matching account if applicable

@@ -743,7 +743,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (saved) {
         const parsed: AppStateData = JSON.parse(saved);
         if (parsed.settings?.aiAccounts && parsed.settings.aiAccounts.length > 0) {
-          return parsed.settings.aiAccounts;
+          // Exclude any stale AXON entries from external AI tool accounts
+          const externalAccounts = parsed.settings.aiAccounts.filter(
+            (a) => a.provider !== 'axon' && a.id !== 'account-axon-offline'
+          );
+          if (externalAccounts.length > 0) {
+            return externalAccounts;
+          }
         }
       }
     } catch (e) {}
@@ -756,7 +762,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (saved) {
         const parsed: AppStateData = JSON.parse(saved);
         if (parsed.settings?.activeModelId) {
-          if (parsed.settings.activeModelId === 'gemini-2.5-flash') {
+          if (
+            parsed.settings.activeModelId === 'axon-offline-core' ||
+            parsed.settings.activeModelId === 'gemini-2.5-flash'
+          ) {
             return 'gemini-3.6-flash';
           }
           return parsed.settings.activeModelId;
@@ -2039,7 +2048,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       aiAccounts.find((a) => a.provider === activeModel.provider);
 
     // Usage-limit awareness: Stop if account is in cooldown (Strict rule: DO NOT auto-switch)
-    if (currentAccount && isAccountInCooldown(currentAccount)) {
+    // AXON's local core is strictly excluded from usage limits and cooldown tracking
+    if (currentAccount && currentAccount.provider !== 'axon' && isAccountInCooldown(currentAccount)) {
       const remaining = getRemainingCooldownString(currentAccount);
       setMessages((prev) => [
         ...prev,
@@ -2062,9 +2072,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsGeneratingResponse(true);
       setLiveThinkingStatus('Processing on-device...');
       try {
-        const localReply = brainResult?.plan
-          ? `[AXON Local Core — On-Device Engine]\n\nI have analyzed your request using AXON internal reasoning:\n\n• **Goal**: ${brainResult.plan.goal}\n• **Strategy**: ${brainResult.plan.rationale}\n\n**Action Plan:**\n${brainResult.plan.steps.map((s) => `${s.stepIndex}. **${s.title}**: ${s.summary}`).join('\n')}\n\n*Running in on-device mode for workspace "${activeProject.name}". To connect to multimodal cloud models, select Gemini in the Model Engine or AI Accounts.*`
-          : `[AXON Local Core]\n\nOperating in on-device mode for workspace "${activeProject.name}". Local offline intelligence is active. To enable cloud AI models, select Gemini in the Model Engine or AI Accounts.`;
+        const localReply = axonBrain.generateOfflineResponse(
+          {
+            id: userMsg.id,
+            text,
+            projectId: activeProjectId,
+            attachment,
+            context: {
+              conversationHistory: nextMessages,
+              projectNotes: activeProjectNotes,
+              systemContext: activeProject?.systemContext || '',
+              timelineEvents: projectActivities,
+              capabilityRegistry,
+            },
+          },
+          brainResult
+        );
 
         setMessages((prev) => [
           ...prev,
@@ -2102,6 +2125,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setLiveThinkingStatus(currentStatusLabel);
 
     try {
+      // If browser is offline, route directly to AXON local reasoning core without waiting for network timeout
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        throw new Error('OFFLINE_NETWORK');
+      }
+
       // Auto-retry rule evaluation on connection issue / network failure
       const retryRule = automationRules.find(
         (r) => r.enabled && r.triggerType === 'connection_error' && r.actionType === 'retry_automatically'
@@ -2181,7 +2209,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (!response || !data || !response.ok || !data.success) {
         // Usage-limit detection: record cooldown timer (up to 24 hours) in memory
-        if (response?.status === 429 || data?.errorType === 'RATE_LIMIT') {
+        // Only applies to external AI tool accounts (Gemini, Claude, ChatGPT), NEVER to AXON's local core
+        if (
+          (response?.status === 429 || data?.errorType === 'RATE_LIMIT') &&
+          currentAccount &&
+          currentAccount.provider !== 'axon'
+        ) {
           const cooldownUntil = Date.now() + 24 * 60 * 60 * 1000;
           if (currentAccount) {
             setAiAccounts((prev) =>
@@ -2309,18 +2342,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         },
       ]);
     } catch (err) {
-      // Offline fallback
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `msg-${Date.now()}-fallback`,
-          sender: 'axon',
-          text: `I am currently running in offline mode. To interact with ${activeModel.name}, ensure your network is connected and your official API key is configured in Settings.`,
-          projectId: activeProjectId,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          modelUsed: 'AXON Offline Fallback',
-        },
-      ]);
+      // Offline fallback: Use AXON local reasoning core to process the user's actual message
+      try {
+        const offlineReply = axonBrain.generateOfflineResponse(
+          {
+            id: userMsg.id,
+            text,
+            projectId: activeProjectId,
+            attachment,
+            context: {
+              conversationHistory: nextMessages,
+              projectNotes: activeProjectNotes,
+              systemContext: activeProject?.systemContext || '',
+              timelineEvents: projectActivities,
+              capabilityRegistry,
+            },
+          },
+          brainResult
+        );
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `msg-${Date.now()}-local-core`,
+            sender: 'axon',
+            text: offlineReply,
+            projectId: activeProjectId,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            modelUsed: 'AXON Local Core',
+          },
+        ]);
+      } catch (localErr) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `msg-${Date.now()}-local-core-fallback`,
+            sender: 'axon',
+            text: `[AXON Local Core] Received request: "${text}". Operating in local offline mode.`,
+            projectId: activeProjectId,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            modelUsed: 'AXON Local Core',
+          },
+        ]);
+      }
     } finally {
       setIsGeneratingResponse(false);
       setLiveThinkingStatus(null);

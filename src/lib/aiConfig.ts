@@ -18,14 +18,6 @@ export const AVAILABLE_AI_MODELS: AIModelOption[] = [
     description: 'Ultra-fast multimodal reasoning and responsive assistance.',
   },
   {
-    id: 'axon-offline-core',
-    name: 'AXON Local Core',
-    provider: 'axon',
-    providerName: 'AXON Engine',
-    badge: 'Offline Safe',
-    description: 'On-device local assistant capable of offline queries, calculations, and local scripts.',
-  },
-  {
     id: 'gemini-2.5-flash',
     name: 'Gemini 2.5 Flash',
     provider: 'gemini',
@@ -69,24 +61,22 @@ export const DEFAULT_AI_ACCOUNTS: AIAccount[] = [
     isRateLimited: false,
     createdAt: new Date().toISOString(),
   },
-  {
-    id: 'account-axon-offline',
-    provider: 'axon',
-    label: 'AXON Offline Engine',
-    apiKey: '',
-    isActive: true,
-    isRateLimited: false,
-    createdAt: new Date().toISOString(),
-  },
 ];
 
 export function isAccountInCooldown(account?: AIAccount): boolean {
   if (!account || !account.cooldownUntil) return false;
+  // AXON local/offline core is strictly excluded from usage limits and cooldown tracking
+  if (account.provider === 'axon' || account.id?.includes('axon')) {
+    return false;
+  }
   return Date.now() < account.cooldownUntil;
 }
 
 export function getRemainingCooldownString(accountOrCooldownUntil?: AIAccount | number): string {
   if (!accountOrCooldownUntil) return '';
+  if (typeof accountOrCooldownUntil === 'object' && (accountOrCooldownUntil.provider === 'axon' || accountOrCooldownUntil.id?.includes('axon'))) {
+    return '';
+  }
   const cooldownUntil =
     typeof accountOrCooldownUntil === 'number'
       ? accountOrCooldownUntil
